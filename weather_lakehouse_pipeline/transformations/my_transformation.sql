@@ -1,0 +1,114 @@
+CREATE OR REFRESH STREAMING TABLE weather_raw
+COMMENT 'One row per Open-Meteo source response file'
+AS
+SELECT
+    *,
+    _metadata.file_name AS source_file,
+    _metadata.file_path AS source_file_path,
+    current_timestamp() AS ingested_at_utc
+FROM STREAM read_files(
+    '/Volumes/hungarian_weather_lakehouse/raw/weather_landing/responses/',
+    format => 'json',
+    multiLine => true,
+    inferColumnTypes => true
+);
+
+
+
+CREATE OR REFRESH MATERIALIZED VIEW
+hungarian_weather_lakehouse.silver.weather_hourly
+(
+    CONSTRAINT valid_city
+        EXPECT (city <> '')
+        ON VIOLATION FAIL UPDATE,
+
+    CONSTRAINT valid_timestamp
+        EXPECT (hour_utc IS NOT NULL)
+        ON VIOLATION FAIL UPDATE,
+
+    CONSTRAINT non_negative_precipitation
+        EXPECT (
+            precipitation_mm >= 0
+            OR precipitation_mm IS NULL
+        )
+)
+COMMENT 'One accepted hourly observation per city and weather model'
+AS
+
+WITH flattened AS (
+    SELECT
+        regexp_extract(
+            b.source_file, '^([a-z]+)_', 1
+        ) AS city,
+
+        make_timestamp(
+            TRY_CAST(SUBSTRING(h.hour_string, 1, 4) AS INT),
+            TRY_CAST(SUBSTRING(h.hour_string, 6, 2) AS INT),
+            TRY_CAST(SUBSTRING(h.hour_string, 9, 2) AS INT),
+            TRY_CAST(SUBSTRING(h.hour_string, 12, 2) AS INT),
+            TRY_CAST(SUBSTRING(h.hour_string, 15, 2) AS INT),
+            0,
+            'UTC'
+        ) AS hour_utc,
+
+        TRY_CAST(
+            get(b.hourly.temperature_2m, h.pos)
+            AS DOUBLE
+        ) AS temperature_c,
+
+        TRY_CAST(
+            get(b.hourly.precipitation, h.pos)
+            AS DOUBLE
+        ) AS precipitation_mm,
+
+        TRY_CAST(
+            get(b.hourly.wind_speed_10m, h.pos)
+            AS DOUBLE
+        ) AS wind_speed_kmh,
+
+        'era5' AS weather_model,
+
+        b.source_file,
+        b.source_file_path,
+        b.ingested_at_utc
+
+    FROM hungarian_weather_lakehouse.bronze.weather_raw AS b,
+    LATERAL posexplode(b.hourly.time)
+        AS h(pos, hour_string)
+)
+
+SELECT *
+FROM flattened
+
+QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY city, hour_utc, weather_model
+    ORDER BY ingested_at_utc DESC, source_file_path DESC
+) = 1;
+
+
+
+CREATE OR REFRESH MATERIALIZED VIEW
+hungarian_weather_lakehouse.gold.daily_weather_summary
+COMMENT 'Daily weather metrics by city and weather model'
+AS
+SELECT
+    city,
+    CAST(hour_utc AS DATE) AS date_utc,
+    weather_model,
+
+    COUNT(*) AS hours_reported,
+    COUNT(temperature_c) AS temperature_hours_reported,
+    COUNT(precipitation_mm) AS precipitation_hours_reported,
+
+    ROUND(AVG(temperature_c), 2) AS avg_temperature_c,
+    MIN(temperature_c) AS min_temperature_c,
+    MAX(temperature_c) AS max_temperature_c,
+
+    ROUND(SUM(precipitation_mm), 2) AS total_precipitation_mm,
+    MAX(wind_speed_kmh) AS max_wind_speed_kmh
+
+FROM hungarian_weather_lakehouse.silver.weather_hourly
+GROUP BY
+    city,
+    CAST(hour_utc AS DATE),
+    weather_model;
