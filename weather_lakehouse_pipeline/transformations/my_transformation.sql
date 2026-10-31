@@ -89,29 +89,39 @@ QUALIFY ROW_NUMBER() OVER (
 
 CREATE OR REFRESH MATERIALIZED VIEW
 hungarian_weather_lakehouse.gold.daily_weather_summary
-COMMENT 'Daily weather metrics by city and weather model'
+COMMENT 'Daily weather metrics derived from the Gold star schema'
 AS
 SELECT
-    city,
-    CAST(hour_utc AS DATE) AS date_utc,
-    weather_model,
+    l.city_code AS city,
+    d.full_date AS date_utc,
+    w.weather_model,
 
     COUNT(*) AS hours_reported,
-    COUNT(temperature_c) AS temperature_hours_reported,
-    COUNT(precipitation_mm) AS precipitation_hours_reported,
+    COUNT(f.temperature_c) AS temperature_hours_reported,
+    COUNT(f.precipitation_mm) AS precipitation_hours_reported,
 
-    ROUND(AVG(temperature_c), 2) AS avg_temperature_c,
-    MIN(temperature_c) AS min_temperature_c,
-    MAX(temperature_c) AS max_temperature_c,
+    ROUND(AVG(f.temperature_c), 2) AS avg_temperature_c,
+    MIN(f.temperature_c) AS min_temperature_c,
+    MAX(f.temperature_c) AS max_temperature_c,
 
-    ROUND(SUM(precipitation_mm), 2) AS total_precipitation_mm,
-    MAX(wind_speed_kmh) AS max_wind_speed_kmh
+    ROUND(SUM(f.precipitation_mm), 2) AS total_precipitation_mm,
+    MAX(f.wind_speed_kmh) AS max_wind_speed_kmh
 
-FROM hungarian_weather_lakehouse.silver.weather_hourly
+FROM hungarian_weather_lakehouse.gold.fact_hourly_weather f
+
+JOIN hungarian_weather_lakehouse.gold.dim_location l
+    ON f.location_key = l.location_key
+
+JOIN hungarian_weather_lakehouse.gold.dim_date d
+    ON f.date_key = d.date_key
+
+JOIN hungarian_weather_lakehouse.gold.dim_weather_source w
+    ON f.source_key = w.source_key
+
 GROUP BY
-    city,
-    CAST(hour_utc AS DATE),
-    weather_model;
+    l.city_code,
+    d.full_date,
+    w.weather_model;
 
 
 
