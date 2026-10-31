@@ -182,3 +182,56 @@ AS sources (
     model_description,
     source_timezone
 );
+
+
+CREATE OR REFRESH MATERIALIZED VIEW
+hungarian_weather_lakehouse.gold.fact_hourly_weather
+(
+    CONSTRAINT valid_dimension_keys
+        EXPECT (
+            location_key IS NOT NULL
+            AND date_key IS NOT NULL
+            AND source_key IS NOT NULL
+        )
+        ON VIOLATION FAIL UPDATE
+)
+COMMENT 'One weather observation per location, UTC hour and model'
+AS
+
+WITH observations AS (
+    SELECT
+        s.*,
+
+        date_from_unix_date(
+            CAST(
+                FLOOR(unix_seconds(s.hour_utc) / 86400)
+                AS INT
+            )
+        ) AS date_utc
+
+    FROM hungarian_weather_lakehouse.silver.weather_hourly s
+)
+
+SELECT
+    l.location_key,
+    d.date_key,
+    w.source_key,
+
+    o.hour_utc,
+    o.temperature_c,
+    o.precipitation_mm,
+    o.wind_speed_kmh,
+
+    o.source_file,
+    o.ingested_at_utc
+
+FROM observations o
+
+LEFT JOIN hungarian_weather_lakehouse.gold.dim_location l
+    ON o.city = l.city_code
+
+LEFT JOIN hungarian_weather_lakehouse.gold.dim_date d
+    ON o.date_utc = d.full_date
+
+LEFT JOIN hungarian_weather_lakehouse.gold.dim_weather_source w
+    ON o.weather_model = w.weather_model;
