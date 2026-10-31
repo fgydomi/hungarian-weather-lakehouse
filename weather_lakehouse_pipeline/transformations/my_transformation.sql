@@ -112,3 +112,25 @@ GROUP BY
     city,
     CAST(hour_utc AS DATE),
     weather_model;
+
+
+
+
+CREATE OR REFRESH MATERIALIZED VIEW
+hungarian_weather_lakehouse.gold.dim_location
+COMMENT 'Reference dimension for monitored Hungarian cities'
+AS
+SELECT *
+FROM VALUES
+    (101, 'budapest', 'Budapest', 47.4979, 19.0402),
+    (102, 'debrecen', 'Debrecen', 47.5316, 21.6273),
+    (103, 'szeged',   'Szeged',   46.2530, 20.1414),
+    (104, 'pecs',     'Pécs',     46.0727, 18.2323),
+    (105, 'gyor',     'Győr',     47.6875, 17.6504)
+AS locations (
+    location_key,
+    city_code,
+    city_name,
+    latitude,
+    longitude
+);
