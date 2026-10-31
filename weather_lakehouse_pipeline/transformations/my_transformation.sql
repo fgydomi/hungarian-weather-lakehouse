@@ -158,3 +158,27 @@ FROM explode(
         INTERVAL 1 DAY
     )
 ) AS dates(full_date);
+
+
+CREATE OR REFRESH MATERIALIZED VIEW
+hungarian_weather_lakehouse.gold.dim_weather_source
+COMMENT 'Weather data provider and model reference dimension'
+AS
+SELECT *
+FROM VALUES
+    (
+        201,
+        'open-meteo',
+        'Open-Meteo Historical Weather API',
+        'era5',
+        'ERA5 Reanalysis',
+        'UTC'
+    )
+AS sources (
+    source_key,
+    provider_code,
+    provider_name,
+    weather_model,
+    model_description,
+    source_timezone
+);
