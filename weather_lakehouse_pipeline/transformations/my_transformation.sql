@@ -134,3 +134,27 @@ AS locations (
     latitude,
     longitude
 );
+
+
+
+CREATE OR REFRESH MATERIALIZED VIEW
+hungarian_weather_lakehouse.gold.dim_date
+COMMENT 'Calendar dimension for weather reporting'
+AS
+SELECT
+    CAST(DATE_FORMAT(full_date, 'yyyyMMdd') AS INT)
+        AS date_key,
+    full_date,
+    YEAR(full_date) AS year,
+    QUARTER(full_date) AS quarter,
+    MONTH(full_date) AS month,
+    DAYOFMONTH(full_date) AS day_of_month,
+    DAYOFWEEK(full_date) AS day_of_week,
+    DATE_FORMAT(full_date, 'EEEE') AS weekday_name
+FROM explode(
+    sequence(
+        DATE '2025-01-01',
+        DATE '2028-12-31',
+        INTERVAL 1 DAY
+    )
+) AS dates(full_date);
