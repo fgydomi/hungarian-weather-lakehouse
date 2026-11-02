@@ -253,3 +253,110 @@ LEFT JOIN hungarian_weather_lakehouse.gold.dim_monitoring_status m
         o.date_utc < m.valid_to
         OR m.valid_to IS NULL
     );
+
+
+
+CREATE OR REFRESH MATERIALIZED VIEW
+hungarian_weather_lakehouse.gold.daily_weather_local
+COMMENT 'Hungarian-local daily weather metrics with coverage checks'
+AS
+
+WITH localized AS (
+    SELECT
+        f.location_key,
+        f.source_key,
+        f.hour_utc,
+        f.temperature_c,
+        f.precipitation_mm,
+        f.wind_speed_kmh,
+
+        -- Derive the Budapest calendar date independently
+        -- of the SQL session's display timezone.
+        date_from_unix_date(
+            CAST(
+                FLOOR(
+                    unix_seconds(
+                        from_utc_timestamp(
+                            f.hour_utc,
+                            'Europe/Budapest'
+                        )
+                    ) / 86400
+                ) AS INT
+            )
+        ) AS local_date
+
+    FROM hungarian_weather_lakehouse.gold.fact_hourly_weather f
+),
+
+daily AS (
+    SELECT
+        location_key,
+        source_key,
+        local_date,
+
+        COUNT(*) AS hours_reported,
+        COUNT(temperature_c) AS temperature_hours_reported,
+        COUNT(precipitation_mm) AS precipitation_hours_reported,
+
+        ROUND(AVG(temperature_c), 2) AS avg_temperature_c,
+        ROUND(SUM(precipitation_mm), 2) AS total_precipitation_mm,
+        MAX(wind_speed_kmh) AS max_wind_speed_kmh
+
+    FROM localized
+    GROUP BY location_key, source_key, local_date
+),
+
+coverage AS (
+    SELECT
+        d.*,
+
+        CAST((
+            unix_seconds(
+                make_timestamp(
+                    YEAR(date_add(local_date, 1)),
+                    MONTH(date_add(local_date, 1)),
+                    DAYOFMONTH(date_add(local_date, 1)),
+                    0, 0, 0, 'Europe/Budapest'
+                )
+            )
+            -
+            unix_seconds(
+                make_timestamp(
+                    YEAR(local_date),
+                    MONTH(local_date),
+                    DAYOFMONTH(local_date),
+                    0, 0, 0, 'Europe/Budapest'
+                )
+            )
+        ) / 3600 AS INT) AS expected_hours
+
+    FROM daily d
+)
+
+SELECT
+    l.city_code AS city,
+    d.date_key AS local_date_key,
+    c.local_date,
+    w.weather_model,
+
+    c.hours_reported,
+    c.expected_hours,
+    (c.hours_reported = c.expected_hours) AS is_complete_day,
+
+    c.temperature_hours_reported,
+    c.precipitation_hours_reported,
+
+    c.avg_temperature_c,
+    c.total_precipitation_mm,
+    c.max_wind_speed_kmh
+
+FROM coverage c
+
+JOIN hungarian_weather_lakehouse.gold.dim_location l
+    ON c.location_key = l.location_key
+
+JOIN hungarian_weather_lakehouse.gold.dim_weather_source w
+    ON c.source_key = w.source_key
+
+JOIN hungarian_weather_lakehouse.gold.dim_date d
+    ON c.local_date = d.full_date;
