@@ -16,7 +16,12 @@ CITIES = {
 }
 
 
-def extract_weather(city, start_date, end_date):
+def extract_weather(
+    city,
+    start_date,
+    end_date,
+    output_root=None,
+):
     latitude, longitude = CITIES[city]
 
     params = {
@@ -45,7 +50,14 @@ def extract_weather(city, start_date, end_date):
         "%Y%m%dT%H%M%S%fZ"
     )
 
-    output_dir = Path("data/raw") / city
+    if output_root is None:
+        output_dir = Path("data/raw") / city
+        metadata_dir = Path("data/metadata") / city
+    else:
+        root = Path(output_root)
+        output_dir = root / "responses"
+        metadata_dir = root / "metadata" / city
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     filename = (
@@ -72,7 +84,6 @@ def extract_weather(city, start_date, end_date):
         "raw_file": output_path.as_posix(),
     }
 
-    metadata_dir = Path("data/metadata") / city
     metadata_dir.mkdir(parents=True, exist_ok=True)
 
     metadata_path = metadata_dir / f"{output_path.stem}.metadata.json"
