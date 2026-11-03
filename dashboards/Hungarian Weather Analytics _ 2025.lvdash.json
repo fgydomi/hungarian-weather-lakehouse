@@ -1,0 +1,742 @@
+{
+  "datasets": [
+    {
+      "name": "f53733d4",
+      "displayName": "Daily Temperature - 2025",
+      "queryLines": [
+        "SELECT\r\n",
+        "    city,\r\n",
+        "    local_date,\r\n",
+        "    avg_temperature_c\r\n",
+        "FROM hungarian_weather_lakehouse.gold.daily_weather_local\r\n",
+        "WHERE local_date >= DATE '2025-02-01'\r\n",
+        "  AND local_date < DATE '2026-01-01'\r\n",
+        "  AND is_complete_day = TRUE\r\n",
+        "  AND temperature_hours_reported = expected_hours\r\n",
+        "ORDER BY local_date, city;"
+      ],
+      "catalog": "hungarian_weather_lakehouse",
+      "schema": "gold"
+    },
+    {
+      "name": "53bf65a2",
+      "displayName": "Monthly Precipitation - 2025",
+      "queryLines": [
+        "WITH complete_days AS (\r\n",
+        "    SELECT\r\n",
+        "        city,\r\n",
+        "        CAST(DATE_TRUNC('MONTH', local_date) AS DATE)\r\n",
+        "            AS month_start,\r\n",
+        "        total_precipitation_mm\r\n",
+        "\r\n",
+        "    FROM hungarian_weather_lakehouse.gold.daily_weather_local\r\n",
+        "\r\n",
+        "    WHERE local_date >= DATE '2025-01-01'\r\n",
+        "      AND local_date < DATE '2026-01-01'\r\n",
+        "      AND weather_model = 'era5'\r\n",
+        "      AND is_complete_day = TRUE\r\n",
+        "      AND precipitation_hours_reported = expected_hours\r\n",
+        "),\r\n",
+        "\r\n",
+        "monthly AS (\r\n",
+        "    SELECT\r\n",
+        "        city,\r\n",
+        "        month_start,\r\n",
+        "        ROUND(SUM(total_precipitation_mm), 2)\r\n",
+        "            AS monthly_precipitation_mm,\r\n",
+        "        COUNT(*) AS complete_days\r\n",
+        "\r\n",
+        "    FROM complete_days\r\n",
+        "    GROUP BY city, month_start\r\n",
+        ")\r\n",
+        "\r\n",
+        "SELECT\r\n",
+        "    city,\r\n",
+        "    month_start,\r\n",
+        "    monthly_precipitation_mm\r\n",
+        "\r\n",
+        "FROM monthly\r\n",
+        "\r\n",
+        "WHERE complete_days = DAY(LAST_DAY(month_start))\r\n",
+        "\r\n",
+        "ORDER BY month_start, city;"
+      ],
+      "catalog": "hungarian_weather_lakehouse",
+      "schema": "gold"
+    },
+    {
+      "name": "cc1e5182",
+      "displayName": "Monthly Wind Speed - 2025",
+      "queryLines": [
+        "WITH monthly AS (\r\n",
+        "    SELECT\r\n",
+        "        city,\r\n",
+        "        CAST(DATE_TRUNC('MONTH', local_date) AS DATE)\r\n",
+        "            AS month_start,\r\n",
+        "\r\n",
+        "        ROUND(MAX(max_wind_speed_kmh), 1)\r\n",
+        "            AS max_hourly_wind_kmh,\r\n",
+        "\r\n",
+        "        COUNT(*) AS complete_days\r\n",
+        "\r\n",
+        "    FROM hungarian_weather_lakehouse.gold.daily_weather_local\r\n",
+        "\r\n",
+        "    WHERE local_date >= DATE '2025-01-01'\r\n",
+        "      AND local_date < DATE '2026-01-01'\r\n",
+        "      AND weather_model = 'era5'\r\n",
+        "      AND is_complete_day = TRUE\r\n",
+        "      AND max_wind_speed_kmh IS NOT NULL\r\n",
+        "\r\n",
+        "    GROUP BY city, CAST(DATE_TRUNC('MONTH', local_date) AS DATE)\r\n",
+        ")\r\n",
+        "\r\n",
+        "SELECT\r\n",
+        "    city,\r\n",
+        "    month_start,\r\n",
+        "    max_hourly_wind_kmh\r\n",
+        "FROM monthly\r\n",
+        "WHERE complete_days = DAY(LAST_DAY(month_start))\r\n",
+        "ORDER BY month_start, city;\r\n"
+      ]
+    },
+    {
+      "name": "cd81f526",
+      "displayName": "Weather Data Quality - 2025",
+      "queryLines": [
+        "WITH calendar AS (\r\n",
+        "    SELECT\r\n",
+        "        l.city_code AS city,\r\n",
+        "        d.full_date AS local_date,\r\n",
+        "\r\n",
+        "        CAST((\r\n",
+        "            unix_seconds(\r\n",
+        "                make_timestamp(\r\n",
+        "                    YEAR(date_add(d.full_date, 1)),\r\n",
+        "                    MONTH(date_add(d.full_date, 1)),\r\n",
+        "                    DAYOFMONTH(date_add(d.full_date, 1)),\r\n",
+        "                    0, 0, 0, 'Europe/Budapest'\r\n",
+        "                )\r\n",
+        "            )\r\n",
+        "            -\r\n",
+        "            unix_seconds(\r\n",
+        "                make_timestamp(\r\n",
+        "                    YEAR(d.full_date),\r\n",
+        "                    MONTH(d.full_date),\r\n",
+        "                    DAYOFMONTH(d.full_date),\r\n",
+        "                    0, 0, 0, 'Europe/Budapest'\r\n",
+        "                )\r\n",
+        "            )\r\n",
+        "        ) / 3600 AS INT) AS expected_hours\r\n",
+        "\r\n",
+        "    FROM hungarian_weather_lakehouse.gold.dim_location l\r\n",
+        "    CROSS JOIN hungarian_weather_lakehouse.gold.dim_date d\r\n",
+        "\r\n",
+        "    WHERE d.full_date >= DATE '2025-01-01'\r\n",
+        "      AND d.full_date < DATE '2026-01-01'\r\n",
+        "),\r\n",
+        "\r\n",
+        "coverage AS (\r\n",
+        "    SELECT\r\n",
+        "        c.city,\r\n",
+        "        c.local_date,\r\n",
+        "        c.expected_hours,\r\n",
+        "        COALESCE(w.hours_reported, 0) AS hours_reported,\r\n",
+        "        COALESCE(w.temperature_hours_reported, 0)\r\n",
+        "            AS temperature_hours,\r\n",
+        "        COALESCE(w.precipitation_hours_reported, 0)\r\n",
+        "            AS precipitation_hours\r\n",
+        "\r\n",
+        "    FROM calendar c\r\n",
+        "\r\n",
+        "    LEFT JOIN hungarian_weather_lakehouse.gold.daily_weather_local w\r\n",
+        "        ON c.city = w.city\r\n",
+        "        AND c.local_date = w.local_date\r\n",
+        "        AND w.weather_model = 'era5'\r\n",
+        ")\r\n",
+        "\r\n",
+        "SELECT\r\n",
+        "    city,\r\n",
+        "    COUNT(*) AS calendar_days,\r\n",
+        "\r\n",
+        "    COUNT_IF(hours_reported = expected_hours)\r\n",
+        "        AS complete_days,\r\n",
+        "\r\n",
+        "    SUM(expected_hours) AS expected_hours,\r\n",
+        "    SUM(hours_reported) AS observed_hours,\r\n",
+        "\r\n",
+        "    SUM(expected_hours - hours_reported)\r\n",
+        "        AS missing_hours,\r\n",
+        "\r\n",
+        "    SUM(expected_hours - temperature_hours)\r\n",
+        "        AS missing_temperature_values,\r\n",
+        "\r\n",
+        "    SUM(expected_hours - precipitation_hours)\r\n",
+        "        AS missing_precipitation_values,\r\n",
+        "\r\n",
+        "    ROUND(\r\n",
+        "        100.0 * SUM(hours_reported) / SUM(expected_hours),\r\n",
+        "        2\r\n",
+        "    ) AS coverage_pct\r\n",
+        "\r\n",
+        "FROM coverage\r\n",
+        "GROUP BY city\r\n",
+        "ORDER BY city;"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "44a6c2c3",
+      "displayName": "Hungarian Weather Analytics Dashboard",
+      "layout": [
+        {
+          "widget": {
+            "name": "daily-average-temperature-by-city",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "f53733d4",
+                  "fields": [
+                    {
+                      "name": "city",
+                      "expression": "`city`"
+                    },
+                    {
+                      "name": "monthly(local_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `local_date`)"
+                    },
+                    {
+                      "name": "avg(avg_temperature_c)",
+                      "expression": "AVG(`avg_temperature_c`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "<span style=\"text-align:center;display:block;\"><span style=\"font-size: 18px;\">Monthly Average Temperature by City</span></span>",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "mark": {
+                "lineShape": "linear"
+              },
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "monthly(local_date)",
+                  "axis": {
+                    "hideLabels": false,
+                    "hideGrid": false
+                  },
+                  "format": {
+                    "type": "date",
+                    "date": "locale-short-month"
+                  },
+                  "displayName": "Hungarian Local Date",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "avg(avg_temperature_c)",
+                  "displayName": "Mean air temperature (°C)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "city",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "gyor",
+                        "color": {
+                          "themeColorType": "visualizationColors",
+                          "position": 4
+                        }
+                      },
+                      {
+                        "value": "debrecen",
+                        "color": {
+                          "themeColorType": "visualizationColors",
+                          "position": 3
+                        }
+                      },
+                      {
+                        "value": "pecs",
+                        "color": {
+                          "themeColorType": "visualizationColors",
+                          "position": 2
+                        }
+                      }
+                    ]
+                  }
+                },
+                "label": {
+                  "show": false
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "monthly-precipitation-by-city",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "53bf65a2",
+                  "fields": [
+                    {
+                      "name": "city",
+                      "expression": "`city`"
+                    },
+                    {
+                      "name": "monthly(month_start)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `month_start`)"
+                    },
+                    {
+                      "name": "sum(monthly_precipitation_mm)",
+                      "expression": "SUM(`monthly_precipitation_mm`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "<span style=\"text-align:center;display:block\"><span style=\"font-size:18px\">Monthly Total Precipitation by City (2025)</span></span>",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "mark": {
+                "layout": "group"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "monthly(month_start)",
+                  "displayName": "Month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(monthly_precipitation_mm)",
+                  "displayName": "Precipitation (mm)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "city",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 13,
+            "width": 6,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "monthly-maximum-hourly-wind-speed-2025",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cc1e5182",
+                  "fields": [
+                    {
+                      "name": "city",
+                      "expression": "`city`"
+                    },
+                    {
+                      "name": "monthly(month_start)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `month_start`)"
+                    },
+                    {
+                      "name": "max(max_hourly_wind_kmh)",
+                      "expression": "MAX(`max_hourly_wind_kmh`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "<span style=\"text-align:center;display:block;\"><span style=\"font-size: 18px;\">Monthly Maximum Hourly Wind Speed (2025)</span></span>",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "monthly(month_start)",
+                  "displayName": "Month",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "max(max_hourly_wind_kmh)",
+                  "displayName": "Wind speed (km/h)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "city",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 13,
+            "width": 6,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "weather-data-quality-2025",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cd81f526",
+                  "fields": [
+                    {
+                      "name": "city",
+                      "expression": "`city`"
+                    },
+                    {
+                      "name": "calendar_days",
+                      "expression": "`calendar_days`"
+                    },
+                    {
+                      "name": "complete_days",
+                      "expression": "`complete_days`"
+                    },
+                    {
+                      "name": "missing_hours",
+                      "expression": "`missing_hours`"
+                    },
+                    {
+                      "name": "missing_temperature_values",
+                      "expression": "`missing_temperature_values`"
+                    },
+                    {
+                      "name": "missing_precipitation_values",
+                      "expression": "`missing_precipitation_values`"
+                    },
+                    {
+                      "name": "coverage_pct",
+                      "expression": "`coverage_pct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "<span style=\"text-align:center;display:block\"><span style=\"font-size: 18px;\">Weather Data Completeness by City</span></span>",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "bandedRows": {
+                "enabled": true
+              },
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "city"
+                  },
+                  {
+                    "fieldName": "calendar_days",
+                    "contentAlignment": "center"
+                  },
+                  {
+                    "fieldName": "complete_days",
+                    "contentAlignment": "center"
+                  },
+                  {
+                    "fieldName": "missing_hours",
+                    "contentAlignment": "center"
+                  },
+                  {
+                    "fieldName": "missing_temperature_values",
+                    "contentAlignment": "center"
+                  },
+                  {
+                    "fieldName": "missing_precipitation_values",
+                    "contentAlignment": "center"
+                  },
+                  {
+                    "fieldName": "coverage_pct",
+                    "format": {
+                      "type": "number-plain",
+                      "abbreviation": "none",
+                      "decimalPlaces": {
+                        "type": "exact",
+                        "places": 2
+                      },
+                      "significantFigures": {
+                        "type": "all"
+                      },
+                      "hideGroupSeparator": true
+                    },
+                    "contentAlignment": "center",
+                    "headerAlignment": "center",
+                    "formatTemplate": "{{ @formatted }} %",
+                    "style": {
+                      "type": "basic",
+                      "fontWeight": 600,
+                      "fontStyle": "normal",
+                      "fontSize": 13,
+                      "foregroundColor": {
+                        "themeColorType": "visualizationColors",
+                        "position": 7
+                      },
+                      "rules": [
+                        {
+                          "condition": {
+                            "operator": ">="
+                          },
+                          "backgroundColor": {
+                            "themeColorType": "visualizationColors",
+                            "position": 9
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 21,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "6a4192ad",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## <span style=\"font-size:18px\">About this dashboard</span>\n",
+                "\n",
+                "<span style=\"font-size:14px\">Explore 2025 historical weather trends across five Hungarian cities using Open-Meteo ERA5 data. Monthly weather comparisons cover February–December, while data-quality indicators cover the full year.</span>\n",
+                "\n",
+                "<span style=\"font-size:14px\">January is excluded from monthly comparisons because the UTC-based extraction window does not contain the first hour of the Hungarian local calendar year. This boundary difference is detected by the pipeline's completeness checks.</span>"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 12,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "f84fc6bb",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# <span style=\"text-align:center;display:block\"><span style=\"font-size: 48px;line-height: 1.5;\">Hungarian Weather Analytics | 2025</span></span>"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "14b0c2f7",
+      "displayName": "Global Filters",
+      "layout": [
+        {
+          "widget": {
+            "name": "city",
+            "queries": [
+              {
+                "name": "dashboards/01f1d6e8366a1e6cb1f72c0325c76433/datasets/01f1d6e86a2a1a45a8262a7e37362802_city",
+                "query": {
+                  "datasetName": "f53733d4",
+                  "fields": [
+                    {
+                      "name": "city",
+                      "expression": "`city`"
+                    },
+                    {
+                      "name": "city_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f1d6e8366a1e6cb1f72c0325c76433/datasets/01f1d6eb104118279c32527fdc890e9f_city",
+                "query": {
+                  "datasetName": "53bf65a2",
+                  "fields": [
+                    {
+                      "name": "city",
+                      "expression": "`city`"
+                    },
+                    {
+                      "name": "city_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f1d6e8366a1e6cb1f72c0325c76433/datasets/01f1d706fb41120db4e747faf50f7f78_city",
+                "query": {
+                  "datasetName": "cd81f526",
+                  "fields": [
+                    {
+                      "name": "city",
+                      "expression": "`city`"
+                    },
+                    {
+                      "name": "city_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f1d6e8366a1e6cb1f72c0325c76433/datasets/01f1d6fb6c7713d28ba1e8a4c0876fc4_city",
+                "query": {
+                  "datasetName": "cc1e5182",
+                  "fields": [
+                    {
+                      "name": "city",
+                      "expression": "`city`"
+                    },
+                    {
+                      "name": "city_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "City",
+                  "fields": []
+                }
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "city",
+                    "queryName": "dashboards/01f1d6e8366a1e6cb1f72c0325c76433/datasets/01f1d6e86a2a1a45a8262a7e37362802_city"
+                  },
+                  {
+                    "fieldName": "city",
+                    "queryName": "dashboards/01f1d6e8366a1e6cb1f72c0325c76433/datasets/01f1d6eb104118279c32527fdc890e9f_city"
+                  },
+                  {
+                    "fieldName": "city",
+                    "queryName": "dashboards/01f1d6e8366a1e6cb1f72c0325c76433/datasets/01f1d706fb41120db4e747faf50f7f78_city"
+                  },
+                  {
+                    "fieldName": "city",
+                    "queryName": "dashboards/01f1d6e8366a1e6cb1f72c0325c76433/datasets/01f1d6fb6c7713d28ba1e8a4c0876fc4_city"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 1,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_GLOBAL_FILTERS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "applyModeEnabled": false
+  }
+}
