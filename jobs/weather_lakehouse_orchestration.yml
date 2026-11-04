@@ -1,0 +1,51 @@
+resources:
+  jobs:
+    weather_lakehouse_orchestration:
+      name: weather_lakehouse_orchestration
+      schedule:
+        quartz_cron_expression: 0 0 8 * * ?
+        timezone_id: UTC
+        pause_status: UNPAUSED
+      tasks:
+        - task_key: extract_weather_api
+          spark_python_task:
+            python_file: src/ingest_weather_job.py
+            parameters:
+              - --lookback-days
+              - "7"
+              - --delay-days
+              - "7"
+            source: GIT
+          environment_key: Default
+        - task_key: update_monitoring_scd2
+          depends_on:
+            - task_key: extract_weather_api
+          sql_task:
+            file:
+              path: sql/merge_dim_monitoring_status.sql
+              source: GIT
+            warehouse_id: 54654eb542e903f0
+        - task_key: refresh_weather_pipeline
+          depends_on:
+            - task_key: update_monitoring_scd2
+          pipeline_task:
+            pipeline_id: 2a541c8e-0631-4fb7-92c9-0a42f19b8800
+        - task_key: validate_weather_data
+          depends_on:
+            - task_key: refresh_weather_pipeline
+          sql_task:
+            file:
+              path: sql/validate_weather_pipeline.sql
+              source: GIT
+            warehouse_id: 54654eb542e903f0
+      git_source:
+        git_url: https://github.com/fgydomi/hungarian-weather-lakehouse.git
+        git_provider: gitHub
+        git_branch: main
+      queue:
+        enabled: true
+      environments:
+        - environment_key: Default
+          spec:
+            environment_version: "6"
+      performance_target: PERFORMANCE_OPTIMIZED
