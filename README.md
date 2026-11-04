@@ -92,6 +92,18 @@ The Databricks AI/BI dashboard, **Hungarian Weather Analytics | 2025**, includes
 
 The version-controlled dashboard definition is available at [`dashboards/Hungarian Weather Analytics _ 2025.lvdash.json`](dashboards/Hungarian%20Weather%20Analytics%20_%202025.lvdash.json). Viewing the live dashboard requires appropriate Databricks workspace permissions.
 
+
+### Dashboard screenshots
+
+The gallery below shows the published dashboard with the **City** filter set to **All**.
+
+| Dashboard overview | Monthly temperature trends |
+| --- | --- |
+| ![Hungarian Weather Analytics overview](docs/images/dashboard-overview.png) | ![Monthly average temperature by city](docs/images/temperature-trends.png) |
+| **Precipitation and wind comparisons** | **2025 local-calendar completeness** |
+| ![Monthly precipitation totals and maximum hourly wind speed](docs/images/precipitation-and-wind.png) | ![Data completeness and quality indicators](docs/images/data-completeness.png) |
+
+
 ## Automated workflow
 
 The Lakeflow Job `weather_lakehouse_orchestration` runs four dependent tasks:
