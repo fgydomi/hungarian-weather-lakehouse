@@ -1,6 +1,7 @@
 
 import argparse
 import json
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -60,11 +61,22 @@ def ingest_day(city, latitude, longitude, day):
         "models": "era5",
     }
 
-    response = requests.get(
-        API_URL,
-        params=params,
-        timeout=60
-    )
+    for attempt in range(5):
+        response = requests.get(
+            API_URL,
+            params=params,
+            timeout=60
+        )
+        if response.status_code == 429 and attempt < 4:
+            wait = 2 ** attempt * 10
+            print(
+                f"429 rate limited for {city} {day_str}; "
+                f"retrying in {wait}s"
+            )
+            time.sleep(wait)
+            continue
+        break
+
     response.raise_for_status()
 
     data = response.json()
